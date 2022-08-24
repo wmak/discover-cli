@@ -64,6 +64,10 @@ class Discover():
             self.graph_width = width
             self.load_graph_data()
 
+    def table_resize(self, width, height):
+        column_width = width//len(self.headers)
+        self.table.setColumnSize([column_width for _ in self.headers])
+
     def create_table(self):
         self.table = ttk.TTkFancyTable()
         table_header = Header()
@@ -73,6 +77,7 @@ class Discover():
         self.table.setHeader = table_header.setHeader
         self.table.activated.connect(self.cell_clicked)
         self.load_table_data()
+        self.table.resizeEvent = self.table_resize
 
     def create_search(self):
         self.search = ttk.TTkLineEdit(text=self.query)
@@ -80,12 +85,23 @@ class Discover():
 
     def create_split(self):
         """ The section between graph and table """
-        self.split = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=5)
+        self.split = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=2)
         column_button = ttk.TTkButton(border=False, text="Columns")
-        self.split.layout().addWidget(ttk.TTkLabel(text="Results"), row=0, col=0)
-        self.split.layout().addWidget(column_button, row=0, col=3)
-        self.split.layout().addWidget(ttk.TTkWidget(), row=1, col=3)
         column_button.clicked.connect(self.debug_button_clicked)
+
+        self.yAxis_edit = ttk.TTkLineEdit(text=self.yAxis)
+        self.yAxis_edit.returnPressed.connect(self.update_yAxis)
+
+        self.split.layout().addWidget(ttk.TTkLabel(text="Results"), row=1, col=0, colspan=2)
+        self.split.layout().addWidget(column_button, row=1, col=3)
+
+        axis_picker = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=1)
+        axis_picker.layout().addWidget(ttk.TTkLabel(text="Y-Axis: ", maxWidth=8), row=0, col=1)
+        axis_picker.layout().addWidget(self.yAxis_edit, row=0, col=2)
+        self.split.layout().addWidget(axis_picker, row=0, col=3)
+
+    def create_error(self):
+        self.error_window = ttk.TTkWindow(pos=(0,0), size=(30, 10), title="error", layout=ttk.TTkGridLayout())
 
     def load_graph_data(self):
         assert self.graph, "graph needs to be initialized first"
@@ -98,7 +114,7 @@ class Discover():
         url = URL_BASE.format(
             organization_slug="sentry",
             endpoint="events-stats",
-            params=f"?interval={interval}s&partial=1&project=1&query={self.query}&referrer=api.discover.default-chart&statsPeriod=24h&yAxis=eps%28%29",
+            params=f"?interval={interval}s&partial=1&project=1&query={self.query}&referrer=api.discover.default-chart&statsPeriod=24h&yAxis={self.yAxis}",
         )
         if url == self.graph_url:
             return
@@ -108,7 +124,7 @@ class Discover():
             url,
             headers=self.http_headers
         )
-        assert response.status == 200, f"Not authenticated {response.status}{url}"
+        assert response.status == 200, f"{response.status}{response.data}{url}"
         response_data = response.data.decode('utf-8')
         jsondata = json.loads(response_data)
 
@@ -118,9 +134,7 @@ class Discover():
         }
         self.graph._data = [[0]]
         for key, value in data.items():
-            self.pending_graph_data.append(value)
-
-        self.timer.start(self.delay)
+            self.graph.addValue([value])
 
     def timer_event(self):
         if len(self.pending_graph_data) > 0:
@@ -178,7 +192,12 @@ class Discover():
                 headers.append(header)
 
         # Set the headers & data
-        self.table.setColumnSize([-1 for _ in headers])
+        table_width, _ = self.table.size()
+        if table_width > 0:
+            column_width = table_width//len(headers)
+        else:
+            column_width = -1
+        self.table.setColumnSize([column_width for _ in headers])
         self.table.setAlignment([
             ttk.TTkK.LEFT_ALIGN for _ in headers
         ])
@@ -213,6 +232,14 @@ class Discover():
             self.save()
             self.load_graph_data()
             self.load_table_data()
+
+    @ttk.pyTTkSlot()
+    def update_yAxis(self):
+        new_axis = self.yAxis_edit.text()
+        if self.yAxis != new_axis:
+            self.yAxis = new_axis
+            self.save()
+            self.load_graph_data()
 
     @ttk.pyTTkSlot(ttk.TTkKeyEvent)
     def key_pressed(self, key_event):
@@ -251,6 +278,7 @@ class Discover():
                 "headers": self.headers,
                 "sort_dir": self.sort_dir,
                 "sort_column": self.sort_column,
+                "yAxis": self.yAxis,
             }))
 
     def __init__(self):
@@ -268,15 +296,17 @@ class Discover():
         if exists("query.json"):
             with open("query.json") as jsonfile:
                 saved_query = json.load(jsonfile)
-                self.query = saved_query["query"]
-                self.headers = saved_query["headers"]
-                self.sort_dir = saved_query["sort_dir"]
-                self.sort_column = saved_query["sort_column"]
+                self.query = saved_query.get("query", "event.type:transaction")
+                self.headers = saved_query.get("headers", ["transaction", "count"])
+                self.sort_dir = saved_query.get("sort_dir", "-")
+                self.sort_column = saved_query.get("sort_column", self.headers[-1])
+                self.yAxis = saved_query.get("yAxis", "epm()")
         else:
             self.query = "event.type:transaction"
             self.headers = ["transaction", "count()", "failure_count()"]
             self.sort_dir = "-"
             self.sort_column = self.headers[-1]
+            self.yAxis = "epm()"
             self.save()
 
         # http setup
@@ -287,7 +317,7 @@ class Discover():
 
         # ttk setup
         self.root = ttk.TTk()
-        self.delay = 0.005
+        self.delay = 0.001
         self.timer = ttk.TTkTimer()
         self.timer.timeout.connect(self.timer_event)
 
@@ -295,6 +325,7 @@ class Discover():
         self.root.eventKeyPress.connect(self.key_pressed)
         self.root.setLayout(ttk.TTkVBoxLayout())
         self.frame = ttk.TTkWindow(parent=self.root, title="Discover", layout=ttk.TTkGridLayout())
+        self.tabs = ttk.TTkTabWidget(parent=self.frame)
 
         # Create the widgets
         self.create_split()
@@ -302,12 +333,26 @@ class Discover():
         self.create_search()
         self.create_graph()
         self.create_table()
+        self.create_error()
 
         # Setup the layout
-        self.frame.layout().addWidget(self.search, row=0, col=0)
-        self.frame.layout().addWidget(self.graph, row=1, col=0)
-        self.frame.layout().addWidget(self.split, row=2, col=0)
-        self.frame.layout().addWidget(self.table, row=3, col=0)
+        self.main_tab = ttk.TTkWidget(layout=ttk.TTkGridLayout())
+        layout = self.main_tab.layout()
+        layout.addWidget(self.search, row=0, col=0)
+        layout.addWidget(self.graph, row=1, col=0)
+        layout.addWidget(self.split, row=2, col=0)
+        layout.addWidget(self.table, row=3, col=0)
+
+        self.comparison_tab = ttk.TTkWidget(layout=ttk.TTkGridLayout())
+        layout = self.comparison_tab.layout()
+        # layout.addWidget(self.search, row=0, col=0)
+        # layout.addWidget(self.graph, row=1, col=0)
+        # layout.addWidget(self.split, row=2, col=0)
+        # layout.addWidget(self.table, row=3, col=0)
+
+        # Tab setup
+        self.tabs.addTab(self.main_tab, "main")
+        self.tabs.addTab(self.comparison_tab, "comparison")
 
         self.root.mainloop()
 
