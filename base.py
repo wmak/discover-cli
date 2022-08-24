@@ -33,11 +33,11 @@ class Discover():
         )
         self.column_editor_area = ttk.TTkWidget(layout=ttk.TTkGridLayout())
         self.column_editor.layout().addWidget(self.column_editor_area, row=1, col=0, colspan=2)
-        add_button = ttk.TTkButton(border=False, text="Add", maxHeight=3)
+        add_button = ttk.TTkButton(border=False, text="[A]dd", maxHeight=3)
         add_button.clicked.connect(self.column_added)
         self.column_editor.layout().addWidget(add_button, row=2, col=0)
 
-        exit_button = ttk.TTkButton(border=False, text="Confirm", maxHeight=3)
+        exit_button = ttk.TTkButton(border=False, text="Co[n]firm", maxHeight=3)
         exit_button.clicked.connect(self.column_button_clicked)
         self.column_editor.layout().addWidget(exit_button, row=2, col=1)
 
@@ -66,6 +66,7 @@ class Discover():
                 return delete
             line_delete.clicked.connect(create_delete_function(index))
             line_edit.textEdited.connect(create_edited_function(index))
+        self.last_line_edit = line_edit
         self.column_editor.setVisible(False)
         self.column_editor.setVisible(True)
 
@@ -79,7 +80,6 @@ class Discover():
             self.load_graph_data()
 
     def table_resize(self, width, height):
-        return
         column_width = width//len(self.headers)
         self.table.setColumnSize([column_width for _ in self.headers])
 
@@ -95,23 +95,29 @@ class Discover():
         self.table.resizeEvent = self.table_resize
 
     def create_search(self):
+        self.search_container = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=1)
+        layout = self.search_container.layout()
+        layout.addWidget(ttk.TTkLabel(text="S[e]arch: ", maxWidth=10), row=0, col=0, colspan=1)
         self.search = ttk.TTkLineEdit(text=self.query)
+        layout.addWidget(self.search, row=0, col=1, colspan=20)
         self.search.returnPressed.connect(self.run_search)
 
     def create_split(self):
         """ The section between graph and table """
         self.split = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=2)
-        column_button = ttk.TTkButton(border=False, text="Columns")
+        column_button = ttk.TTkButton(border=False, text="Colum[n]s")
         column_button.clicked.connect(self.debug_button_clicked)
 
         self.yAxis_edit = ttk.TTkLineEdit(text=self.yAxis)
         self.yAxis_edit.returnPressed.connect(self.update_yAxis)
 
         self.split.layout().addWidget(ttk.TTkLabel(text="Results"), row=1, col=0, colspan=2)
+        self.sort_display = ttk.TTkLabel(text=f"So[r]t: {self.sort_label()}")
+        self.split.layout().addWidget(self.sort_display, row=1, col=2, colspan=2)
         self.split.layout().addWidget(column_button, row=1, col=3)
 
         axis_picker = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=1)
-        axis_picker.layout().addWidget(ttk.TTkLabel(text="Y-Axis: ", maxWidth=8), row=0, col=1)
+        axis_picker.layout().addWidget(ttk.TTkLabel(text="Y-A[x]is: ", maxWidth=10), row=0, col=1)
         axis_picker.layout().addWidget(self.yAxis_edit, row=0, col=2)
         self.split.layout().addWidget(axis_picker, row=0, col=3)
 
@@ -120,7 +126,6 @@ class Discover():
 
     def load_graph_data(self):
         assert self.graph, "graph needs to be initialized first"
-        self.pending_graph_data = []
         graph_width, _ = self.graph.size()
         graph_width -= 1
         if graph_width == 0:
@@ -150,11 +155,6 @@ class Discover():
         self.graph._data = [[0]]
         for key, value in data.items():
             self.graph.addValue([value])
-
-    def timer_event(self):
-        if len(self.pending_graph_data) > 0:
-            self.graph.addValue([self.pending_graph_data.pop()])
-            self.timer.start(self.delay)
 
     def load_table_data(self):
         assert self.table, "table needs to be initialized first"
@@ -186,9 +186,10 @@ class Discover():
         )
         assert response.status == 200, f"{response.status}{response.data}{url}"
         response_data = response.data.decode('utf-8')
-        jsondata = json.loads(response_data)
-        self.first_table_load = False
+        self.table_data = json.loads(response_data)
+        self.render_table()
 
+    def render_table(self):
         # Reset table data
         tableView = self.table._tableView._tableView
         tableView._tableDataId = []
@@ -197,14 +198,14 @@ class Discover():
 
         # Prep the header
         headers = []
+        prefix_char = 97
         for header in self.headers:
+            prefix = f"[{chr(prefix_char)}]" if self.sort_mode else ""
             if header == self.sort_column:
-                if self.sort_dir == "-":
-                    headers.append(f"{header}▼")
-                else:
-                    headers.append(f"{header}▲")
+                headers.append(f"{prefix}{self.sort_label()}")
             else:
-                headers.append(header)
+                headers.append(f"{prefix}{header}")
+            prefix_char += 1
 
         # Set the headers & data
         table_width, _ = self.table.size()
@@ -218,9 +219,14 @@ class Discover():
         ])
         self.table.setHeader(headers)
         self.table._tableView._header.paintEvent()
-        self.table_data = jsondata["data"]
-        for item in jsondata["data"]:
+        for item in self.table_data["data"]:
             self.table.appendItem([str(item[key]) for key in self.headers])
+
+    def sort_label(self):
+        if self.sort_dir == "-":
+            return f"{self.sort_column}▼"
+        else:
+            return f"{self.sort_column}▲"
 
     @ttk.pyTTkSlot(int)
     def cell_clicked(self, number):
@@ -236,6 +242,7 @@ class Discover():
         else:
             self.sort_column = column
 
+        self.sort_display.setText(f"So[r]t: {self.sort_label()}")
         self.save()
         self.load_table_data()
 
@@ -259,6 +266,48 @@ class Discover():
     @ttk.pyTTkSlot(ttk.TTkKeyEvent)
     def key_pressed(self, key_event):
         self.last_key = key_event.key
+        if key_event.mod == 67108864:
+            # ctrl-e
+            if self.last_key == 69:
+                self.search.setFocus()
+            # ctrl-n
+            elif self.last_key == 78:
+                self.column_button_clicked()
+            # ctrl-a
+            elif self.editing_columns and self.last_key == 65:
+                self.column_added()
+                self.last_line_edit.setFocus()
+            # ctrl-x
+            elif self.last_key == 88:
+                self.yAxis_edit.setFocus()
+            # ctrl-u
+            elif self.last_key == 85:
+                pass
+            elif self.last_key == 82:
+                self.sort_mode = True
+                if self.sort_mode:
+                    self.render_table()
+                self.root.setFocus()
+        elif self.sort_mode:
+            char = ord(self.last_key)
+            if (char >= 65 and char <= 90) or (char >= 97 and char <= 122):
+                self.sort_mode = False
+                new_dir = self.sort_dir
+                new_sort = self.sort_column
+                if char >= 97 and char - 97 < len(self.headers):
+                    new_dir = "-"
+                    new_sort = self.headers[char - 97]
+                elif char >= 65 and char - 65 < len(self.headers):
+                    new_dir = ""
+                    new_sort = self.headers[char - 65]
+                if new_dir != self.sort_dir or new_sort != self.sort_column:
+                    self.sort_dir = new_dir
+                    self.sort_column = new_sort
+                    self.save()
+                    self.load_table_data()
+                else:
+                    self.render_table()
+            self.debug.setText(str(char))
 
     @ttk.pyTTkSlot()
     def column_added(self):
@@ -287,6 +336,10 @@ class Discover():
         self.frame.setVisible(False)
         self.frame.setVisible(True)
 
+    def quit(self):
+        self.save()
+        self.root.quit()
+
     def save(self):
         with open("query.json", "w") as jsonfile:
             jsonfile.write(json.dumps({
@@ -300,13 +353,12 @@ class Discover():
     def __init__(self):
         # State
         self.editing_columns = False
-        self.line_edits = []
+        self.last_line_edit = None
+        self.sort_mode = False
         self.graph_width = 0
-        self.first_table_load = True
-        self.first_graph_load = True
         self.graph_url = ""
         self.table_url = ""
-        self.pending_graph_data = []
+        self.table_data = None
 
         # Discover setup
         if exists("query.json"):
@@ -334,8 +386,8 @@ class Discover():
         # ttk setup
         self.root = ttk.TTk()
         self.delay = 0.001
-        self.timer = ttk.TTkTimer()
-        self.timer.timeout.connect(self.timer_event)
+        # self.timer = ttk.TTkTimer()
+        # self.timer.timeout.connect(self.timer_event)
 
         self.last_key = None
         self.root.eventKeyPress.connect(self.key_pressed)
@@ -350,14 +402,23 @@ class Discover():
         self.create_graph()
         self.create_table()
         self.create_error()
+        self.debug = ttk.TTkTextDocument(text="test")
+        debug_widget = ttk.TTkTextEdit(
+            document=self.debug,
+            maxHeight=1,
+        )
+        self.root.layout().addWidget(debug_widget)
 
         # Setup the layout
-        self.main_tab = ttk.TTkWidget(layout=ttk.TTkGridLayout())
-        layout = self.main_tab.layout()
-        layout.addWidget(self.search, row=0, col=0)
-        layout.addWidget(self.graph, row=1, col=0)
-        layout.addWidget(self.split, row=2, col=0)
-        layout.addWidget(self.table, row=3, col=0)
+        # self.main_tab = ttk.TTkWidget(layout=ttk.TTkGridLayout())
+        quit_button = ttk.TTkButton(border=False, text="[C]Quit")
+        quit_button.clicked.connect(self.quit)
+        layout = self.frame.layout()
+        layout.addWidget(quit_button, row=0, col=5, colspan=1)
+        layout.addWidget(self.search_container, row=1, col=0, colspan=6)
+        layout.addWidget(self.graph, row=2, col=0, colspan=6)
+        layout.addWidget(self.split, row=3, col=0, colspan=6)
+        layout.addWidget(self.table, row=4, col=0, colspan=6)
 
         self.comparison_tab = ttk.TTkWidget(layout=ttk.TTkGridLayout())
         layout = self.comparison_tab.layout()
@@ -367,7 +428,7 @@ class Discover():
         # layout.addWidget(self.table, row=3, col=0)
 
         # Tab setup
-        self.tabs.addTab(self.main_tab, "main")
+        # self.tabs.addTab(self.main_tab, "main")
         # self.tabs.addTab(self.comparison_tab, "comparison")
 
         self.root.mainloop()
