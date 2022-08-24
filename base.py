@@ -89,7 +89,9 @@ class Discover():
 
     def load_graph_data(self):
         assert self.graph, "graph needs to be initialized first"
+        self.pending_graph_data = []
         graph_width, _ = self.graph.size()
+        graph_width -= 1
         if graph_width == 0:
             return
         interval = int(86400 / (graph_width * 2))
@@ -101,23 +103,14 @@ class Discover():
         if url == self.graph_url:
             return
         self.graph_url = url
-        if exists("graph.json") and self.first_graph_load:
-            with open("graph.json") as jsonfile:
-                jsondata = json.load(jsonfile)
-            if self.last_opened and datetime.now() - self.last_opened > timedelta(seconds=interval):
-                self.load_graph_delta(interval)
-        else:
-            response = self.http.request(
-                "GET",
-                url,
-                headers=self.http_headers
-            )
-            assert response.status == 200, f"Not authenticated {response.status}{url}"
-            response_data = response.data.decode('utf-8')
-            jsondata = json.loads(response_data)
-            with open("graph.json", "w") as jsonfile:
-                jsonfile.write(response_data)
-        self.first_graph_load = False
+        response = self.http.request(
+            "GET",
+            url,
+            headers=self.http_headers
+        )
+        assert response.status == 200, f"Not authenticated {response.status}{url}"
+        response_data = response.data.decode('utf-8')
+        jsondata = json.loads(response_data)
 
         data = {
             item[0]: item[1][0]["count"]
@@ -125,28 +118,8 @@ class Discover():
         }
         self.graph._data = [[0]]
         for key, value in data.items():
-            self.graph.addValue([value])
-
-    def load_graph_delta(self, interval):
-        url = URL_BASE.format(
-            organization_slug="sentry",
-            endpoint="events-stats",
-            params=f"?interval={interval}s&partial=1&project=1&query={self.query}&referrer=api.discover.default-chart&start={self.last_opened}&end={datetime.now().isoformat()}&yAxis=eps%28%29",
-        )
-        response = self.http.request(
-            "GET",
-            url,
-            headers=self.http_headers
-        )
-        assert response.status == 200, f"Not authenticated {response.status}{response.data}"
-        response_data = response.data.decode('utf-8')
-        jsondata = json.loads(response_data)
-        data = {
-            item[0]: item[1][0]["count"]
-            for item in jsondata["data"]
-        }
-        for value in data.values():
             self.pending_graph_data.append(value)
+
         self.timer.start(self.delay)
 
     def timer_event(self):
@@ -177,20 +150,14 @@ class Discover():
         if url == self.table_url:
             return
         self.table_url = url
-        if exists("table.json") and self.first_table_load:
-            with open("table.json") as jsonfile:
-                jsondata = json.load(jsonfile)
-        else:
-            response = self.http.request(
-                "GET",
-                url,
-                headers=self.http_headers
-            )
-            assert response.status == 200, f"{response.status}{response.data}{url}"
-            response_data = response.data.decode('utf-8')
-            jsondata = json.loads(response_data)
-            with open("table.json", "w") as jsonfile:
-                jsonfile.write(response_data)
+        response = self.http.request(
+            "GET",
+            url,
+            headers=self.http_headers
+        )
+        assert response.status == 200, f"{response.status}{response.data}{url}"
+        response_data = response.data.decode('utf-8')
+        jsondata = json.loads(response_data)
         self.first_table_load = False
 
         # Reset table data
@@ -284,7 +251,6 @@ class Discover():
                 "headers": self.headers,
                 "sort_dir": self.sort_dir,
                 "sort_column": self.sort_column,
-                "last_opened": datetime.now().isoformat()
             }))
 
     def __init__(self):
@@ -299,7 +265,6 @@ class Discover():
         self.pending_graph_data = []
 
         # Discover setup
-        self.last_opened = None
         if exists("query.json"):
             with open("query.json") as jsonfile:
                 saved_query = json.load(jsonfile)
@@ -307,8 +272,6 @@ class Discover():
                 self.headers = saved_query["headers"]
                 self.sort_dir = saved_query["sort_dir"]
                 self.sort_column = saved_query["sort_column"]
-                if "last_opened" in saved_query:
-                    self.last_opened = datetime.fromisoformat(saved_query["last_opened"])
         else:
             self.query = "event.type:transaction"
             self.headers = ["transaction", "count()", "failure_count()"]
@@ -324,7 +287,7 @@ class Discover():
 
         # ttk setup
         self.root = ttk.TTk()
-        self.delay = 0.1
+        self.delay = 0.005
         self.timer = ttk.TTkTimer()
         self.timer.timeout.connect(self.timer_event)
 
