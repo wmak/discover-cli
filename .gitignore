@@ -1,0 +1,6 @@
+.env
+.envrc
+.python-version
+.venv
+secrets.py
+*.json
