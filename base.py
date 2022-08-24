@@ -42,15 +42,29 @@ class Discover():
         self.column_editor.layout().addWidget(exit_button, row=2, col=1)
 
     def render_column_editor_rows(self):
-        for index, header in enumerate(self.headers):
+        layout = self.column_editor_area.layout()
+        for item in layout.zSortedItems:
+            layout.removeItem(item)
+            del(item)
+        for index, header in enumerate(self.current_headers):
             line_edit = ttk.TTkLineEdit(text=header, border=True)
-            self.column_editor_area.layout().addWidget(line_edit, row=index, col=0, colspan=2)
+            line_delete = ttk.TTkButton(border=False, text="x")
+            layout.addWidget(line_edit, row=index, col=0, colspan=6)
+            layout.addWidget(line_delete, row=index, col=9, colspan=1)
             def create_edited_function(index):
                 @ttk.pyTTkSlot(str)
                 def edited(text):
-                    self.headers[index] = text
+                    self.current_headers[index] = text
 
                 return edited
+            def create_delete_function(index):
+                @ttk.pyTTkSlot()
+                def delete():
+                    self.current_headers.pop(index)
+                    self.render_column_editor_rows()
+
+                return delete
+            line_delete.clicked.connect(create_delete_function(index))
             line_edit.textEdited.connect(create_edited_function(index))
         self.column_editor.setVisible(False)
         self.column_editor.setVisible(True)
@@ -65,6 +79,7 @@ class Discover():
             self.load_graph_data()
 
     def table_resize(self, width, height):
+        return
         column_width = width//len(self.headers)
         self.table.setColumnSize([column_width for _ in self.headers])
 
@@ -247,8 +262,8 @@ class Discover():
 
     @ttk.pyTTkSlot()
     def column_added(self):
-        if len(self.headers) < 20:
-            self.headers.append("transaction")
+        if len(self.current_headers) < 20:
+            self.current_headers.append("transaction")
             self.save()
             self.render_column_editor_rows()
 
@@ -264,6 +279,7 @@ class Discover():
             self.render_column_editor_rows()
         elif not self.editing_columns:
             if self.current_headers != self.headers:
+                self.headers = self.current_headers[:]
                 self.load_table_data()
 
         self.save()
@@ -352,7 +368,7 @@ class Discover():
 
         # Tab setup
         self.tabs.addTab(self.main_tab, "main")
-        self.tabs.addTab(self.comparison_tab, "comparison")
+        # self.tabs.addTab(self.comparison_tab, "comparison")
 
         self.root.mainloop()
 
