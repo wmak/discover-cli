@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from graph import Graph
 from os.path import exists
 from tableHeader import Header
+import math
 import TermTk as ttk
 import json
 import secrets
@@ -118,6 +119,24 @@ class Discover():
         layout.addWidget(self.search, row=0, col=1, colspan=20)
         self.search.returnPressed.connect(self.run_search)
 
+    def create_header(self):
+        self.header = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=2)
+        layout = self.header.layout()
+
+        quit_button = ttk.TTkButton(border=False, text="[C]Quit")
+        quit_button.clicked.connect(self.quit)
+        layout.addWidget(quit_button, row=0, col=5, colspan=1)
+
+        layout.addWidget(ttk.TTkWidget(), row=1, col=2, colspan=3)
+
+        project_edit_area = ttk.TTkWidget(layout=ttk.TTkGridLayout())
+        layout.addWidget(project_edit_area, row=0, col=0, colspan=1)
+
+        self.project_edit = ttk.TTkLineEdit(text=self.project_id)
+        self.project_edit.returnPressed.connect(self.update_project_id)
+        project_edit_area.layout().addWidget(ttk.TTkLabel(text="[P]roject"), row=0, col=0, colspan=1)
+        project_edit_area.layout().addWidget(self.project_edit, row=0, col=1, colspan=3)
+
     def create_split(self):
         """ The section between graph and table """
         self.split = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=2)
@@ -132,7 +151,7 @@ class Discover():
         self.split.layout().addWidget(self.sort_display, row=1, col=2, colspan=2)
         self.split.layout().addWidget(column_button, row=1, col=3)
 
-        self.chart_picker = ttk.TTkButton(border=False, text=f"{self.chart_mode.capitalize()} C[h]art")
+        self.chart_picker = ttk.TTkButton(border=False, text=f"[D]isplay: {self.chart_mode.capitalize()}")
         self.chart_picker.clicked.connect(self.toggle_chart)
         self.split.layout().addWidget(self.chart_picker, row=0, col=2)
 
@@ -154,7 +173,7 @@ class Discover():
         url = URL_BASE.format(
             organization_slug="sentry",
             endpoint="events-stats",
-            params=f"?interval={interval}s&partial=1&project=1&query={self.query}&referrer=api.discover.default-chart&statsPeriod=24h&yAxis={self.yAxis}",
+            params=f"?interval={interval}s&partial=1&project={self.project_id}&query={self.query}&referrer=api.discover.default-chart&statsPeriod=24h&yAxis={self.yAxis}",
         )
         if url == self.graph_url:
             return
@@ -164,7 +183,9 @@ class Discover():
             url,
             headers=self.http_headers
         )
-        assert response.status == 200, f"{response.status}{response.data}{url}"
+        if response.status != 200:
+            self.debug.setText(f"{response.status}{response.data}")
+            return
         response_data = response.data.decode('utf-8')
         jsondata = json.loads(response_data)
 
@@ -192,7 +213,7 @@ class Discover():
         url = URL_BASE.format(
             organization_slug="sentry",
             endpoint="events",
-            params=f"?project=1&query={self.query}&referrer=api.discover.table&statsPeriod=24h&{fields}&sort={self.sort_dir}{self.sort_column}",
+            params=f"?project={self.project_id}&query={self.query}&referrer=api.discover.table&statsPeriod=24h&{fields}&sort={self.sort_dir}{self.sort_column}",
         )
         if url == self.table_url:
             return
@@ -202,7 +223,9 @@ class Discover():
             url,
             headers=self.http_headers
         )
-        assert response.status == 200, f"{response.status}{response.data}{url}"
+        if response.status != 200:
+            self.debug.setText(f"{response.status}{response.data}")
+            return
         response_data = response.data.decode('utf-8')
         self.table_data = json.loads(response_data)
         self.render_table()
@@ -289,6 +312,16 @@ class Discover():
             self.save()
             self.load_graph_data()
 
+    @ttk.pyTTkSlot()
+    def update_project_id(self):
+        new_project = self.project_edit.text()
+        if new_project != self.project_id:
+            self.project_id = new_project
+            self.save()
+            self.load_graph_data()
+            self.load_table_data()
+
+
     @classmethod
     def select_line_edit(cls, line_edit):
         line_edit.setFocus()
@@ -301,13 +334,15 @@ class Discover():
     @ttk.pyTTkSlot()
     def toggle_chart(self):
         self.chart_mode = "line" if self.chart_mode == "area" else "area"
-        self.chart_picker.text = f"{'Area' if self.chart_mode == 'line' else 'Line'} C[h]art"
+        self.chart_picker.text = f"[D]isplay: {self.chart_mode.capitalize()}"
         self.render_graph()
         self.save()
 
     @ttk.pyTTkSlot(ttk.TTkKeyEvent)
     def key_pressed(self, key_event):
         self.last_key = key_event.key
+        self.last_keys.append(self.last_key)
+        self.last_keys = self.last_keys[-12:]
         if key_event.mod == 67108864:
             # ctrl-e
             if self.last_key == 69:
@@ -333,10 +368,15 @@ class Discover():
                 self.sort_mode = True
                 self.render_table()
                 self.root.setFocus()
-            elif self.last_key == 72:
+            elif self.last_key == 68:
                 self.toggle_chart()
+            elif self.last_key == 80:
+                self.select_line_edit(self.project_edit)
         elif self.column_mode:
-            char = ord(self.last_key)
+            try:
+                char = ord(self.last_key)
+            except Exception:
+                return
             if (char >= 65 and char <= 90) or (char >= 97 and char <= 122):
                 self.column_mode = False
                 self.render_column_editor_rows()
@@ -347,7 +387,10 @@ class Discover():
                 if char >= 65 and char - 65 < len(self.headers):
                     self.line_deletes[char-65]()
         elif self.sort_mode:
-            char = ord(self.last_key)
+            try:
+                char = ord(self.last_key)
+            except Exception:
+                return
             if (char >= 65 and char <= 90) or (char >= 97 and char <= 122):
                 self.sort_mode = False
                 new_dir = self.sort_dir
@@ -365,14 +408,21 @@ class Discover():
                     self.load_table_data()
                 else:
                     self.render_table()
-        self.debug.setText(str(self.last_key))
+        if not hasattr(self, "counter") and self.last_keys == [16777235, 16777235, 16777237, 16777237, 16777234, 16777236, 16777234, 16777236, 'b', 'a']:
+            # some easter egg
+            self.counter = 0
+            for i in self.graph_data:
+                self.graph.addValue([0])
+            self.timer = ttk.TTkTimer()
+            self.timer.timeout.connect(self.timer_event)
+            self.timer.start(self.delay)
+        # self.debug.setText(str(self.last_key))
 
     @ttk.pyTTkSlot()
     def timer_event(self):
-        if len(self.timer_functions) > 0:
-            to_call = self.timer_functions.pop()
-            to_call()
-        self.timer.stop()
+        self.graph.addValue([math.sin(self.counter / 100) + 1, math.sin(self.counter / 100 + 3.14) + 1])
+        self.counter += 1
+        self.timer.start(self.delay)
 
     @ttk.pyTTkSlot()
     def column_added(self):
@@ -437,6 +487,7 @@ class Discover():
                 self.sort_column = saved_query.get("sort_column", self.headers[-1])
                 self.yAxis = saved_query.get("yAxis", "epm()")
                 self.chart_mode = saved_query.get("chart_mode", "area")
+                self.project_id = saved_query.get("project_id", "1")
         else:
             self.query = "event.type:transaction"
             self.headers = ["transaction", "count()", "failure_count()"]
@@ -444,6 +495,7 @@ class Discover():
             self.sort_column = self.headers[-1]
             self.yAxis = "epm()"
             self.chart_mode = "area"
+            self.project_id = "1"
             self.save()
 
         # http setup
@@ -454,18 +506,17 @@ class Discover():
 
         # ttk setup
         self.root = ttk.TTk()
-        self.delay = 0.001
-        # self.timer = ttk.TTkTimer()
-        # self.timer_functions = []
-        # self.timer.timeout.connect(self.timer_event)
+        self.delay = 0.01
 
         self.last_key = None
+        self.last_keys = []
         self.root.eventKeyPress.connect(self.key_pressed)
         self.root.setLayout(ttk.TTkVBoxLayout())
         self.frame = ttk.TTkWindow(parent=self.root, title="Discover", layout=ttk.TTkGridLayout())
         self.tabs = ttk.TTkTabWidget(parent=self.frame)
 
         # Create the widgets
+        self.create_header()
         self.create_split()
         self.create_column_editor()
         self.create_search()
@@ -481,10 +532,8 @@ class Discover():
 
         # Setup the layout
         # self.main_tab = ttk.TTkWidget(layout=ttk.TTkGridLayout())
-        quit_button = ttk.TTkButton(border=False, text="[C]Quit")
-        quit_button.clicked.connect(self.quit)
         layout = self.frame.layout()
-        layout.addWidget(quit_button, row=0, col=5, colspan=1)
+        layout.addWidget(self.header, row=0, col=0, colspan=6)
         layout.addWidget(self.search_container, row=1, col=0, colspan=6)
         layout.addWidget(self.graph, row=2, col=0, colspan=6)
         layout.addWidget(self.split, row=3, col=0, colspan=6)

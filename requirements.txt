@@ -1,1 +1,2 @@
 pyTermTk==0.10.22a0
+urllib3==1.26.12
