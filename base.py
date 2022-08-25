@@ -17,7 +17,7 @@ class COLOURS():
 
 class Discover():
     def create_column_editor(self):
-        self.column_editor = ttk.TTkWindow(parent=self.root, title="Column Editor", layout=ttk.TTkGridLayout())
+        self.column_editor = ttk.TTkWindow(parent=self.root, title="Co[l]umn Editor", layout=ttk.TTkGridLayout())
         self.column_editor.setVisible(False)
         text_widget=ttk.TTkTextEdit(
             document=ttk.TTkTextDocument(text="""To group events, add functions f(x) that may take in additional parameters. Tag and field columns will help you view more details about the events (i.e. title)."""),
@@ -43,14 +43,27 @@ class Discover():
 
     def render_column_editor_rows(self):
         layout = self.column_editor_area.layout()
+        self.line_edits = []
+        self.line_deletes = []
         for item in layout.zSortedItems:
             layout.removeItem(item)
             del(item)
         for index, header in enumerate(self.current_headers):
             line_edit = ttk.TTkLineEdit(text=header, border=True)
-            line_delete = ttk.TTkButton(border=False, text="x")
-            layout.addWidget(line_edit, row=index, col=0, colspan=6)
-            layout.addWidget(line_delete, row=index, col=9, colspan=1)
+            if self.column_mode:
+                layout.addWidget(
+                    ttk.TTkLabel(text=f"[{chr(97 + index)}]", maxWidth=3),
+                    row=index,
+                    col=0,
+                    colspan=1
+                )
+                line_delete = ttk.TTkButton(border=False, text=f"x[{chr(65 + index)}]")
+                offset = 1
+            else:
+                line_delete = ttk.TTkButton(border=False, text="x")
+                offset = 0
+            layout.addWidget(line_edit, row=index, col=offset, colspan=10)
+            layout.addWidget(line_delete, row=index, col=11, colspan=2)
             def create_edited_function(index):
                 @ttk.pyTTkSlot(str)
                 def edited(text):
@@ -64,8 +77,11 @@ class Discover():
                     self.render_column_editor_rows()
 
                 return delete
-            line_delete.clicked.connect(create_delete_function(index))
+            delete_function = create_delete_function(index)
+            line_delete.clicked.connect(delete_function)
             line_edit.textEdited.connect(create_edited_function(index))
+            self.line_edits.append(line_edit)
+            self.line_deletes.append(delete_function)
         self.last_line_edit = line_edit
         self.column_editor.setVisible(False)
         self.column_editor.setVisible(True)
@@ -116,6 +132,10 @@ class Discover():
         self.split.layout().addWidget(self.sort_display, row=1, col=2, colspan=2)
         self.split.layout().addWidget(column_button, row=1, col=3)
 
+        self.chart_picker = ttk.TTkButton(border=False, text=f"{self.chart_mode.capitalize()} C[h]art")
+        self.chart_picker.clicked.connect(self.toggle_chart)
+        self.split.layout().addWidget(self.chart_picker, row=0, col=2)
+
         axis_picker = ttk.TTkWidget(layout=ttk.TTkGridLayout(), maxHeight=1)
         axis_picker.layout().addWidget(ttk.TTkLabel(text="Y-A[x]is: ", maxWidth=10), row=0, col=1)
         axis_picker.layout().addWidget(self.yAxis_edit, row=0, col=2)
@@ -148,13 +168,11 @@ class Discover():
         response_data = response.data.decode('utf-8')
         jsondata = json.loads(response_data)
 
-        data = {
+        self.graph_data = {
             item[0]: item[1][0]["count"]
             for item in jsondata["data"]
         }
-        self.graph._data = [[0]]
-        for key, value in data.items():
-            self.graph.addValue([value])
+        self.render_graph()
 
     def load_table_data(self):
         assert self.table, "table needs to be initialized first"
@@ -189,6 +207,14 @@ class Discover():
         self.table_data = json.loads(response_data)
         self.render_table()
 
+    def render_graph(self):
+        self.graph._data = [[0]]
+        for key, value in self.graph_data.items():
+            if self.chart_mode == "area":
+                self.graph.addValue([value])
+            elif self.chart_mode == "line":
+                self.graph.addValue([0, value])
+
     def render_table(self):
         # Reset table data
         tableView = self.table._tableView._tableView
@@ -199,6 +225,7 @@ class Discover():
         # Prep the header
         headers = []
         prefix_char = 97
+        self.sort_display.setText(f"So[r]t: {self.sort_label()}")
         for header in self.headers:
             prefix = f"[{chr(prefix_char)}]" if self.sort_mode else ""
             if header == self.sort_column:
@@ -242,7 +269,6 @@ class Discover():
         else:
             self.sort_column = column
 
-        self.sort_display.setText(f"So[r]t: {self.sort_label()}")
         self.save()
         self.load_table_data()
 
@@ -263,31 +289,63 @@ class Discover():
             self.save()
             self.load_graph_data()
 
+    @classmethod
+    def select_line_edit(cls, line_edit):
+        line_edit.setFocus()
+        txtPos = len(line_edit._text)
+        line_edit._cursorPos     = txtPos
+        line_edit._selectionFrom = txtPos
+        line_edit._selectionTo   = txtPos
+        line_edit._pushCursor()
+
+    @ttk.pyTTkSlot()
+    def toggle_chart(self):
+        self.chart_mode = "line" if self.chart_mode == "area" else "area"
+        self.chart_picker.text = f"{'Area' if self.chart_mode == 'line' else 'Line'} C[h]art"
+        self.render_graph()
+        self.save()
+
     @ttk.pyTTkSlot(ttk.TTkKeyEvent)
     def key_pressed(self, key_event):
         self.last_key = key_event.key
         if key_event.mod == 67108864:
             # ctrl-e
             if self.last_key == 69:
-                self.search.setFocus()
+                self.select_line_edit(self.search)
             # ctrl-n
             elif self.last_key == 78:
                 self.column_button_clicked()
             # ctrl-a
             elif self.editing_columns and self.last_key == 65:
                 self.column_added()
-                self.last_line_edit.setFocus()
+                self.select_line_edit(self.line_edits[-1])
             # ctrl-x
             elif self.last_key == 88:
-                self.yAxis_edit.setFocus()
-            # ctrl-u
-            elif self.last_key == 85:
-                pass
+                self.select_line_edit(self.yAxis_edit)
+            # ctrl-o
+            elif self.last_key == 76:
+                if not self.editing_columns:
+                    self.column_button_clicked()
+                self.column_mode = True
+                self.render_column_editor_rows()
+                self.root.setFocus()
             elif self.last_key == 82:
                 self.sort_mode = True
-                if self.sort_mode:
-                    self.render_table()
+                self.render_table()
                 self.root.setFocus()
+            elif self.last_key == 72:
+                self.toggle_chart()
+        elif self.column_mode:
+            char = ord(self.last_key)
+            if (char >= 65 and char <= 90) or (char >= 97 and char <= 122):
+                self.column_mode = False
+                self.render_column_editor_rows()
+                if char >= 97 and char - 97 < len(self.headers):
+                    self.select_line_edit(self.line_edits[char-97])
+                    # unset the key so we don't append something random
+                    key_event.key = ""
+                if char >= 65 and char - 65 < len(self.headers):
+                    self.line_deletes[char-65]()
         elif self.sort_mode:
             char = ord(self.last_key)
             if (char >= 65 and char <= 90) or (char >= 97 and char <= 122):
@@ -307,7 +365,14 @@ class Discover():
                     self.load_table_data()
                 else:
                     self.render_table()
-            self.debug.setText(str(char))
+        self.debug.setText(str(self.last_key))
+
+    @ttk.pyTTkSlot()
+    def timer_event(self):
+        if len(self.timer_functions) > 0:
+            to_call = self.timer_functions.pop()
+            to_call()
+        self.timer.stop()
 
     @ttk.pyTTkSlot()
     def column_added(self):
@@ -348,12 +413,14 @@ class Discover():
                 "sort_dir": self.sort_dir,
                 "sort_column": self.sort_column,
                 "yAxis": self.yAxis,
+                "chart_mode": self.chart_mode,
             }))
 
     def __init__(self):
         # State
         self.editing_columns = False
-        self.last_line_edit = None
+        self.column_mode = False
+        self.line_edits = []
         self.sort_mode = False
         self.graph_width = 0
         self.graph_url = ""
@@ -369,12 +436,14 @@ class Discover():
                 self.sort_dir = saved_query.get("sort_dir", "-")
                 self.sort_column = saved_query.get("sort_column", self.headers[-1])
                 self.yAxis = saved_query.get("yAxis", "epm()")
+                self.chart_mode = saved_query.get("chart_mode", "area")
         else:
             self.query = "event.type:transaction"
             self.headers = ["transaction", "count()", "failure_count()"]
             self.sort_dir = "-"
             self.sort_column = self.headers[-1]
             self.yAxis = "epm()"
+            self.chart_mode = "area"
             self.save()
 
         # http setup
@@ -387,6 +456,7 @@ class Discover():
         self.root = ttk.TTk()
         self.delay = 0.001
         # self.timer = ttk.TTkTimer()
+        # self.timer_functions = []
         # self.timer.timeout.connect(self.timer_event)
 
         self.last_key = None
